@@ -379,6 +379,40 @@
       }
     }
 
+    /* ---------- Mute toggle (top-right) ----------
+       Same warm-brown outline / transparent fill language as the secondary
+       buttons, shrunk into a quiet circular icon that stays out of the way. */
+    .mute {
+      position: fixed;
+      top: clamp(1rem, 3vh, 1.5rem);
+      right: clamp(1rem, 3vw, 1.5rem);
+      z-index: 2;
+      display: grid;
+      place-items: center;
+      width: 44px;
+      height: 44px;
+      border-radius: 999px;
+      border: 1px solid rgba(138, 106, 74, 0.55);
+      background: transparent;
+      color: var(--deep-teal);
+      cursor: pointer;
+      transition: transform 160ms var(--ease-out),
+                  background 240ms ease,
+                  border-color 240ms ease,
+                  opacity 240ms ease;
+    }
+
+    .mute:active {
+      transform: scale(0.94);
+    }
+
+    @media (hover: hover) and (pointer: fine) {
+      .mute:hover {
+        background: rgba(138, 106, 74, 0.1);
+        border-color: rgba(138, 106, 74, 0.8);
+      }
+    }
+
     /* ---------- Message ---------- */
     .footer {
       display: flex;
@@ -422,6 +456,12 @@
   </style>
 </head>
 <body>
+  <!-- Ambient ocean loop. Volume is driven entirely from JS; starts silent. -->
+  <audio id="ocean" src="ocean.mp3" loop preload="auto"></audio>
+
+  <!-- Mute / unmute all sound -->
+  <button id="mute" class="mute" type="button" aria-label="Mute sound" aria-pressed="false"></button>
+
   <div class="scene" aria-hidden="true">
     <!-- Faint sand grain over the whole gradient -->
     <div class="grain"></div>
@@ -582,6 +622,7 @@
     const pauseBtn = document.getElementById('pause');
     const resetBtn = document.getElementById('reset');
     const messageEl = document.getElementById('message');
+    const muteBtn = document.getElementById('mute');
 
     // State
     let index = 2;               // which duration is selected (defaults to 25)
@@ -592,6 +633,205 @@
     function getSelectedSeconds() {
       return DURATIONS[index] * 60;
     }
+
+    /* ---------- Audio ---------------------------------------------------------
+       Ambient ocean via the HTML5 <audio> element (JS-driven volume fades);
+       the start tone and the finishing singing-bowl chime are synthesised with
+       the Web Audio API. If ocean.mp3 fails to load, everything degrades to
+       silence and the timer keeps working. */
+    const audio = (function () {
+      const OCEAN_AMBIENT = 0.40; // running background level
+      const OCEAN_PAUSED = 0.15;  // quieter "we're paused" level
+
+      const ocean = document.getElementById('ocean');
+      ocean.volume = 0;
+
+      let muted = false;
+      let oceanActive = false;   // ocean is in play (running OR paused)
+      let oceanFailed = false;
+      let fadeRAF = null;
+      let ctx = null;            // lazily-created AudioContext
+      let masterGain = null;     // master gain for all synthesised sound
+
+      ocean.addEventListener('error', () => {
+        oceanFailed = true;
+        console.warn('tide-timer: ocean.mp3 could not be loaded — continuing without ambient sound.');
+      });
+
+      // Smoothly ramp the ocean element volume to `target` over `durationMs`.
+      function fadeOcean(target, durationMs, onDone) {
+        if (fadeRAF) cancelAnimationFrame(fadeRAF);
+        const from = ocean.volume;
+        const startTime = performance.now();
+        function step(now) {
+          const t = durationMs <= 0 ? 1 : Math.min(1, (now - startTime) / durationMs);
+          ocean.volume = Math.max(0, Math.min(1, from + (target - from) * t));
+          if (t < 1) {
+            fadeRAF = requestAnimationFrame(step);
+          } else {
+            fadeRAF = null;
+            if (onDone) onDone();
+          }
+        }
+        fadeRAF = requestAnimationFrame(step);
+      }
+
+      function playOcean() {
+        const p = ocean.play();
+        if (p && typeof p.catch === 'function') {
+          p.catch((err) => {
+            oceanFailed = true;
+            console.warn('tide-timer: ocean.mp3 could not play — continuing without ambient sound.', err);
+          });
+        }
+      }
+
+      // Web Audio context is created on the first user gesture (a button click).
+      function getCtx() {
+        if (!ctx) {
+          const AC = window.AudioContext || window.webkitAudioContext;
+          if (!AC) return null;
+          ctx = new AC();
+          masterGain = ctx.createGain();
+          masterGain.gain.value = muted ? 0 : 1;
+          masterGain.connect(ctx.destination);
+        }
+        if (ctx.state === 'suspended') ctx.resume();
+        return ctx;
+      }
+
+      // A single soft 440Hz sine that fades in and out over 0.6s at ~15%.
+      function startTone() {
+        try {
+          const c = getCtx();
+          if (!c) return;
+          const now = c.currentTime;
+          const osc = c.createOscillator();
+          const g = c.createGain();
+          osc.type = 'sine';
+          osc.frequency.value = 440;
+          g.gain.setValueAtTime(0.0001, now);
+          g.gain.linearRampToValueAtTime(0.15, now + 0.3);
+          g.gain.linearRampToValueAtTime(0.0001, now + 0.6);
+          osc.connect(g).connect(masterGain);
+          osc.start(now);
+          osc.stop(now + 0.65);
+        } catch (err) {
+          console.warn('tide-timer: start tone failed.', err);
+        }
+      }
+
+      // Calm singing-bowl chime: layered sine partials, slow attack, long decay,
+      // and a slow tremolo for the "breathing" quality. Peaks around 25%.
+      function chime() {
+        try {
+          const c = getCtx();
+          if (!c) return;
+          const now = c.currentTime;
+
+          // Envelope: slow ~0.4s attack, long ~5.5s exponential decay.
+          const env = c.createGain();
+          env.gain.setValueAtTime(0.0001, now);
+          env.gain.linearRampToValueAtTime(0.14, now + 0.4);
+          env.gain.exponentialRampToValueAtTime(0.0001, now + 6);
+          env.connect(masterGain);
+
+          // Slow tremolo on the envelope gain — the bowl "breathing".
+          const lfo = c.createOscillator();
+          const lfoGain = c.createGain();
+          lfo.frequency.value = 4.5;
+          lfoGain.gain.value = 0.02;
+          lfo.connect(lfoGain).connect(env.gain);
+          lfo.start(now);
+          lfo.stop(now + 6.2);
+
+          // Fundamental + two quieter harmonics for a rich tone.
+          const partials = [
+            { f: 256, g: 1.0 },
+            { f: 512, g: 0.5 },
+            { f: 768, g: 0.3 },
+          ];
+          partials.forEach(({ f, g }) => {
+            const osc = c.createOscillator();
+            const og = c.createGain();
+            osc.type = 'sine';
+            osc.frequency.value = f;
+            og.gain.value = g;
+            osc.connect(og).connect(env);
+            osc.start(now);
+            osc.stop(now + 6.2);
+          });
+        } catch (err) {
+          console.warn('tide-timer: chime failed.', err);
+        }
+      }
+
+      function updateButton() {
+        muteBtn.setAttribute('aria-pressed', String(muted));
+        muteBtn.setAttribute('aria-label', muted ? 'Unmute sound' : 'Mute sound');
+        const common = 'width="20" height="20" viewBox="0 0 24 24" fill="none" ' +
+          'stroke="currentColor" stroke-width="1.5" stroke-linecap="round" ' +
+          'stroke-linejoin="round" aria-hidden="true"';
+        muteBtn.innerHTML = muted
+          ? '<svg ' + common + '>' +
+              '<path d="M11 5 6 9H2v6h4l5 4z" />' +
+              '<line x1="23" y1="9" x2="17" y2="15" />' +
+              '<line x1="17" y1="9" x2="23" y2="15" />' +
+            '</svg>'
+          : '<svg ' + common + '>' +
+              '<path d="M11 5 6 9H2v6h4l5 4z" />' +
+              '<path d="M15.5 8.5a5 5 0 0 1 0 7" />' +
+              '<path d="M19 5a9 9 0 0 1 0 14" />' +
+            '</svg>';
+      }
+
+      return {
+        // Begin (fresh start) or resume after a pause — decided by oceanActive.
+        startOrResume() {
+          if (oceanActive) {
+            // Resume: bring the ocean back up to the ambient level.
+            if (!oceanFailed) { playOcean(); fadeOcean(OCEAN_AMBIENT, 800); }
+            return;
+          }
+          // Fresh start: fade ocean in from silence + a gentle start cue.
+          oceanActive = true;
+          if (!oceanFailed) {
+            ocean.volume = 0;
+            playOcean();
+            fadeOcean(OCEAN_AMBIENT, 1500);
+          }
+          startTone();
+        },
+        pause() {
+          if (oceanActive && !oceanFailed) fadeOcean(OCEAN_PAUSED, 800);
+        },
+        // Reset before completion: fade the ocean out over 1s and stop it.
+        stop() {
+          if (!oceanActive) return;
+          oceanActive = false;
+          if (!oceanFailed) {
+            fadeOcean(0, 1000, () => { ocean.pause(); ocean.currentTime = 0; });
+          }
+        },
+        // Timer reached zero: fade ocean out over 2s, pause 0.3s, then chime.
+        finish() {
+          if (oceanActive && !oceanFailed) {
+            fadeOcean(0, 2000, () => { ocean.pause(); ocean.currentTime = 0; });
+          }
+          oceanActive = false;
+          setTimeout(chime, 2300);
+        },
+        toggleMute() {
+          muted = !muted;
+          ocean.muted = muted;
+          if (masterGain) masterGain.gain.value = muted ? 0 : 1;
+          updateButton();
+        },
+        init() {
+          updateButton();
+        },
+      };
+    })();
 
     // Format a whole number of seconds as MM:SS.
     function formatTime(totalSeconds) {
@@ -639,6 +879,7 @@
       if (running || remaining <= 0) return;
       running = true;
       hideMessage();
+      audio.startOrResume();
       renderPicker(); // lock the arrows
 
       intervalId = setInterval(() => {
@@ -656,6 +897,7 @@
       clearInterval(intervalId);
       intervalId = null;
       running = false;
+      audio.pause();
       renderPicker(); // unlock the arrows
     }
 
@@ -663,6 +905,7 @@
       clearInterval(intervalId);
       intervalId = null;
       running = false;
+      audio.stop();
       hideMessage();
       remaining = getSelectedSeconds();
       render();
@@ -676,6 +919,7 @@
       remaining = 0;
       render();
       renderPicker();
+      audio.finish();
       messageEl.textContent = "Time's up";
       messageEl.classList.add('show');
     }
@@ -690,10 +934,12 @@
     startBtn.addEventListener('click', start);
     pauseBtn.addEventListener('click', pause);
     resetBtn.addEventListener('click', reset);
+    muteBtn.addEventListener('click', () => audio.toggleMute());
 
     // Initial paint
     render();
     renderPicker();
+    audio.init();
   </script>
 </body>
 </html>
