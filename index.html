@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Focus Timer</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300..700&family=Inter:wght@400;500&display=swap"
+    rel="stylesheet"
+  />
+
+  <style>
+    :root {
+      --deep-teal: #1a4f6b;   /* timer number + secondary button text */
+      --terracotta: #c96f4a;  /* sun-warm primary accent */
+      --brown: #8a6a4a;       /* warm outlines + tagline */
+      --cream: #fbf3e2;       /* text on the terracotta button */
+
+      /* Strong ease-out for UI interactions (starts fast, feels responsive) */
+      --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+    }
+
+    *,
+    *::before,
+    *::after {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      height: 100%;
+      overflow: hidden;
+    }
+
+    body {
+      /* Beach seen from above on a summer afternoon: soft golden-cream sand at
+         the top, warming through beige, into damper sand toward the shore below. */
+      background:
+        linear-gradient(180deg, #f4e4c1 0%, #e8c896 52%, #d8b585 78%, #c9a678 100%);
+      background-attachment: fixed;
+      color: var(--deep-teal);
+      font-family: 'Inter', system-ui, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      /* The timer group is the hero: one centered column sitting on the sand,
+         above the surf that washes in along the bottom of the screen. */
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100dvh;
+    }
+
+    main {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: clamp(1.5rem, 4vh, 2.5rem);
+      padding: 0 2rem;
+      text-align: center;
+      animation: rise 800ms var(--ease-out) both;
+    }
+
+    /* Picker + number read as a single unit */
+    .dial {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.35rem;
+    }
+
+    /* ---------- Beach scene (behind everything) ---------- */
+    .scene {
+      position: fixed;
+      inset: 0;
+      overflow: hidden;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* Real sand grain, not just gradient: an inline feTurbulence noise field
+       tiled across the whole sand area and knocked right back so it reads as
+       fine texture on close inspection without ever getting loud. */
+    .grain {
+      position: absolute;
+      inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' seed='7' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 20 -8'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+      background-repeat: repeat;
+      opacity: 0.08;
+      mix-blend-mode: overlay;
+    }
+
+    /* Shells & pebbles scattered on the sand — small, low opacity, off to the
+       sides so the centre stays clear for the timer. Read as texture, not focal. */
+    .shell {
+      position: absolute;
+      opacity: 0.65;
+      /* Soft warm shadow so shells sit ON the sand, not floating above it */
+      filter: drop-shadow(0 3px 5px rgba(120, 90, 50, 0.35));
+    }
+    .shell.s1 { top: 14%;  left: 9%;   width: 46px; transform: rotate(-16deg); }
+    .shell.s2 { top: 30%;  right: 7%;  width: 34px; transform: rotate(22deg);  }
+    .shell.s3 { top: 60%;  left: 6%;   width: 30px; transform: rotate(8deg);   }
+    .shell.s4 { top: 22%;  right: 15%; width: 24px; transform: rotate(-10deg); }
+    .shell.s5 { top: 68%;  right: 11%; width: 40px; transform: rotate(-24deg); }
+    .shell.s6 { top: 46%;  left: 13%;  width: 22px; transform: rotate(30deg);  }
+
+    /* ---------- Wet-sand shore band ----------------------------------------
+       Where surf meets beach: dry beige fades down into damp golden-brown with
+       a faint reflective sheen at the high-water line. It sits just above the
+       waves' highest reach; the waves wash over it (darkening it further through
+       their transparency), and as they retreat this wet band is briefly revealed
+       before the dry sand — the surf uncovering wet beach. */
+    .wet-sand {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 34vh;
+      background:
+        /* faint reflective sheen at the high-water line */
+        linear-gradient(180deg,
+          transparent 8%,
+          rgba(255, 252, 242, 0.13) 12%,
+          transparent 19%),
+        /* dry beige smoothly darkening into damp golden-brown, no hard edge */
+        linear-gradient(180deg,
+          rgba(201, 166, 120, 0) 0%,
+          rgba(168, 130, 80, 0.22) 10%,
+          rgba(139, 107, 63, 0.5) 26%,
+          rgba(122, 92, 52, 0.68) 60%,
+          rgba(110, 82, 46, 0.72) 100%);
+    }
+
+    /* ---------- Surf: four translucent teal layers washing over the sand -----
+       A static clip box hangs 80px below the screen so the vertical wash never
+       opens a gap. Inside, .surf carries the whole stack up the beach and back
+       on one slow ease-in-out cycle (real water momentum). Each layer also
+       slides horizontally at its own pace; layers alternate direction so they
+       cross and overlap. The SVG is 200% wide with the 1440-unit wave repeated
+       twice, so a -50% slide loops seamlessly. Fills fade from opaque teal at
+       the bottom to transparent at the crest — translucent water, not paper
+       cutouts — so the sand shows through, darkened, under every wave. */
+    .waves {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: -56px;
+      height: 56vh;
+      overflow: hidden;
+    }
+
+    .surf {
+      position: absolute;
+      inset: 0;
+      animation: wash 9s ease-in-out infinite alternate;
+      will-change: transform;
+    }
+
+    .wave {
+      position: absolute;
+      left: 0;
+      bottom: 0;
+      width: 100%;
+    }
+
+    .wave-svg {
+      position: absolute;
+      left: 0;
+      bottom: 0;
+      width: 200%;
+      height: 100%;
+      will-change: transform;
+    }
+
+    /* Layer 1 — farthest up the beach: faintest, smallest amplitude, slowest */
+    .wave.l1 { height: 42vh; opacity: 0.18; }
+    .wave.l1 .wave-svg { animation: slide 14s linear infinite; }
+
+    /* Layer 2 — drifts the opposite way */
+    .wave.l2 { height: 33vh; opacity: 0.3; }
+    .wave.l2 .wave-svg { animation: slide 10s linear infinite reverse; }
+
+    /* Layer 3 — brighter, larger, quicker */
+    .wave.l3 { height: 24vh; opacity: 0.4; }
+    .wave.l3 .wave-svg { animation: slide 7s linear infinite; }
+
+    /* Layer 4 — closest & deepest: most opaque, biggest chop, carries the foam */
+    .wave.l4 { height: 16vh; opacity: 0.65; }
+    .wave.l4 .wave-svg { animation: slide 5s linear infinite reverse; }
+
+    .fill-l1 { fill: url(#gL1); }
+    .fill-l2 { fill: url(#gL2); }
+    .fill-l3 { fill: url(#gL3); }
+    .fill-l4 { fill: url(#gL4); }
+
+    /* Thin, uneven, blurred foam line along the leading (front) wave crest */
+    .foam {
+      fill: none;
+      stroke: rgba(255, 252, 245, 0.7);
+      stroke-width: 2;
+      vector-effect: non-scaling-stroke;
+      filter: drop-shadow(0 0 2px rgba(255, 255, 255, 0.55)) blur(0.6px);
+    }
+
+    /* Deepest water sits at the very bottom edge (closest to the viewer) */
+    .deep-water {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 10vh;
+      background: linear-gradient(180deg, transparent 0%, rgba(15, 67, 86, 0.5) 100%);
+      mix-blend-mode: multiply;
+    }
+
+    @keyframes slide {
+      from { transform: translateX(0); }
+      to   { transform: translateX(-50%); }
+    }
+
+    /* Surf wash: the whole stack rides up onto the sand, then retreats. Slow
+       ease-in-out so it feels like water momentum, not a metronome. */
+    @keyframes wash {
+      from { transform: translateY(46px); }
+      to   { transform: translateY(-46px); }
+    }
+
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(14px); }
+      to   { opacity: 1; transform: none; }
+    }
+
+    /* ---------- Duration picker ---------- */
+    .picker {
+      display: flex;
+      align-items: center;
+      gap: clamp(1rem, 4vw, 2.5rem);
+    }
+
+    .durations {
+      display: flex;
+      align-items: baseline;
+      justify-content: center;
+      gap: clamp(1rem, 3vw, 1.75rem);
+      min-width: 12rem;
+    }
+
+    .duration {
+      font-variant-numeric: tabular-nums;
+      transition: opacity 300ms var(--ease-out),
+                  font-size 300ms var(--ease-out);
+    }
+
+    .duration.side {
+      font-size: clamp(1.1rem, 3vw, 1.3rem);
+      font-weight: 400;
+      opacity: 0.55;
+      color: var(--brown);
+    }
+
+    .duration.center {
+      font-family: 'Fraunces', serif;
+      font-weight: 300;
+      /* Roughly twice the side numbers so the selection reads instantly */
+      font-size: clamp(2.4rem, 7vw, 2.9rem);
+      opacity: 1;
+      color: var(--deep-teal);
+    }
+
+    .duration.empty {
+      opacity: 0;
+    }
+
+    .unit {
+      display: block;
+      font-size: 0.7rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      opacity: 0.75;
+      color: var(--brown);
+      margin-top: 0.4rem;
+    }
+
+    .arrow {
+      display: grid;
+      place-items: center;
+      width: 48px;
+      height: 48px;
+      border-radius: 999px;
+      border: 1px solid rgba(138, 106, 74, 0.6);
+      background: rgba(255, 255, 255, 0.18);
+      color: var(--deep-teal);
+      cursor: pointer;
+      transition: transform 160ms var(--ease-out),
+                  background 240ms ease,
+                  border-color 240ms ease,
+                  opacity 240ms ease;
+    }
+
+    .arrow:active {
+      transform: scale(0.94);
+    }
+
+    .arrow:disabled {
+      opacity: 0.25;
+      cursor: default;
+    }
+
+    /* ---------- Timer ---------- */
+    .timer {
+      font-family: 'Fraunces', serif;
+      font-weight: 300;
+      font-size: clamp(4.5rem, 18vw, 11rem);
+      line-height: 1;
+      letter-spacing: -0.02em;
+      font-variant-numeric: tabular-nums;
+      /* Deep teal reads clean and elegant on the light sand — no glow needed */
+      color: var(--deep-teal);
+    }
+
+    /* ---------- Controls ---------- */
+    .controls {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .btn {
+      font-family: 'Inter', sans-serif;
+      font-size: 0.95rem;
+      font-weight: 500;
+      letter-spacing: 0.02em;
+      min-width: 116px;
+      padding: 0.85rem 1.75rem;
+      border-radius: 999px;
+      /* Secondary (Pause / Reset): soft warm-brown outline, deep-teal text */
+      border: 1px solid rgba(138, 106, 74, 0.55);
+      background: transparent;
+      color: var(--deep-teal);
+      cursor: pointer;
+      transition: transform 160ms var(--ease-out),
+                  background 240ms ease,
+                  border-color 240ms ease,
+                  opacity 240ms ease;
+    }
+
+    .btn:active {
+      transform: scale(0.97);
+    }
+
+    /* Primary: sun-warm terracotta with cream text */
+    .btn.primary {
+      background: var(--terracotta);
+      border-color: transparent;
+      color: var(--cream);
+      box-shadow: 0 6px 18px rgba(201, 111, 74, 0.3);
+    }
+
+    @media (hover: hover) and (pointer: fine) {
+      .btn:hover {
+        background: rgba(138, 106, 74, 0.1);
+        border-color: rgba(138, 106, 74, 0.8);
+      }
+      .btn.primary:hover {
+        background: #d47c56;
+        border-color: transparent;
+      }
+      .arrow:not(:disabled):hover {
+        background: rgba(255, 255, 255, 0.35);
+        border-color: rgba(138, 106, 74, 0.6);
+      }
+    }
+
+    /* ---------- Message ---------- */
+    .footer {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.9rem;
+    }
+
+    .message {
+      min-height: 1.5rem;
+      font-size: 1.05rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--terracotta);
+      opacity: 0;
+      transition: opacity 400ms var(--ease-out);
+    }
+
+    .message.show {
+      opacity: 0.9;
+    }
+
+    .tagline {
+      font-family: 'Fraunces', serif;
+      font-style: italic;
+      font-weight: 500;
+      font-size: calc(0.95rem + 4px);
+      letter-spacing: 0.03em;
+      color: var(--deep-teal);
+      opacity: 0.9;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="scene" aria-hidden="true">
+    <!-- Faint sand grain over the whole gradient -->
+    <div class="grain"></div>
+
+    <!-- Scattered shells & pebbles -->
+    <!-- Spiral shell -->
+    <svg class="shell s1" viewBox="0 0 40 40" fill="none">
+      <path d="M20 4c9 0 16 7 16 16s-7 16-16 16S6 33 6 26c0-5 4-9 9-9s7 3 7 6-2 5-4 5"
+            stroke="#e9a07a" stroke-width="2" stroke-linecap="round" />
+    </svg>
+    <!-- Pebble -->
+    <svg class="shell s2" viewBox="0 0 40 30" fill="none">
+      <ellipse cx="20" cy="16" rx="17" ry="12" fill="#e7d3ab" />
+      <ellipse cx="15" cy="12" rx="6" ry="3" fill="#f2e6c8" opacity="0.7" />
+    </svg>
+    <!-- Starfish -->
+    <svg class="shell s3" viewBox="0 0 40 40" fill="none">
+      <path d="M20 2l5 12 13 1-10 8 4 13-12-7-12 7 4-13-10-8 13-1z" fill="#e78a63" />
+    </svg>
+    <!-- Small pebble -->
+    <svg class="shell s4" viewBox="0 0 40 32" fill="none">
+      <ellipse cx="20" cy="17" rx="15" ry="11" fill="#d8b98a" />
+    </svg>
+    <!-- Bivalve (fan shell) -->
+    <svg class="shell s5" viewBox="0 0 44 40" fill="none">
+      <path d="M22 6C10 6 3 20 3 30c0 3 6 4 19 4s19-1 19-4C41 20 34 6 22 6z" fill="#f0d2b0" />
+      <path d="M22 8v25M13 10l3 22M31 10l-3 22M8 16l6 17M36 16l-6 17"
+            stroke="#d8a988" stroke-width="1.2" stroke-linecap="round" />
+    </svg>
+    <!-- Tiny spiral pebble -->
+    <svg class="shell s6" viewBox="0 0 40 40" fill="none">
+      <circle cx="20" cy="20" r="15" fill="#ead6b4" />
+      <path d="M20 8c6 0 12 5 12 12s-6 12-12 12" stroke="#d3b489" stroke-width="1.5" fill="none" />
+    </svg>
+
+    <!-- Wet-sand shore band, revealed as the surf retreats -->
+    <div class="wet-sand"></div>
+
+    <!-- Surf: four overlapping translucent teal layers.
+         Each path is a 1440-unit irregular wave (varied crest heights, so the
+         horizontal drift is actually trackable) repeated twice to 2880 for a
+         seamless -50% loop. Amplitude grows toward the front layers. -->
+    <div class="waves">
+      <svg width="0" height="0" aria-hidden="true" style="position:absolute">
+        <defs>
+          <linearGradient id="gL1" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#8fd6ce" stop-opacity="0" />
+            <stop offset="0.38" stop-color="#3f9ca8" stop-opacity="1" />
+            <stop offset="1" stop-color="#2f88a0" stop-opacity="1" />
+          </linearGradient>
+          <linearGradient id="gL2" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#6fc8c0" stop-opacity="0" />
+            <stop offset="0.34" stop-color="#2f8598" stop-opacity="1" />
+            <stop offset="1" stop-color="#25748a" stop-opacity="1" />
+          </linearGradient>
+          <linearGradient id="gL3" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#52b8ae" stop-opacity="0" />
+            <stop offset="0.3" stop-color="#1f7286" stop-opacity="1" />
+            <stop offset="1" stop-color="#1c6579" stop-opacity="1" />
+          </linearGradient>
+          <linearGradient id="gL4" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#3f9c94" stop-opacity="0" />
+            <stop offset="0.26" stop-color="#14586c" stop-opacity="1" />
+            <stop offset="1" stop-color="#0f4356" stop-opacity="1" />
+          </linearGradient>
+        </defs>
+      </svg>
+
+      <div class="surf">
+        <!-- Layer 1: farthest up the beach, small amplitude -->
+        <div class="wave l1">
+          <svg class="wave-svg" viewBox="0 0 2880 300" preserveAspectRatio="none">
+            <path class="fill-l1" d="M0,70 Q90,62 180,70 Q270,77 360,70 Q450,63 540,70 Q630,76 720,70 Q810,62 900,70 Q990,77 1080,70 Q1170,63 1260,70 Q1350,76 1440,70 Q1530,62 1620,70 Q1710,77 1800,70 Q1890,63 1980,70 Q2070,76 2160,70 Q2250,62 2340,70 Q2430,77 2520,70 Q2610,63 2700,70 Q2790,76 2880,70 L2880,300 L0,300 Z" />
+          </svg>
+        </div>
+
+        <!-- Layer 2: medium amplitude -->
+        <div class="wave l2">
+          <svg class="wave-svg" viewBox="0 0 2880 300" preserveAspectRatio="none">
+            <path class="fill-l2" d="M0,70 Q90,52 180,70 Q270,85 360,70 Q450,54 540,70 Q630,84 720,70 Q810,53 900,70 Q990,86 1080,70 Q1170,55 1260,70 Q1350,83 1440,70 Q1530,52 1620,70 Q1710,85 1800,70 Q1890,54 1980,70 Q2070,84 2160,70 Q2250,53 2340,70 Q2430,86 2520,70 Q2610,55 2700,70 Q2790,83 2880,70 L2880,300 L0,300 Z" />
+          </svg>
+        </div>
+
+        <!-- Layer 3: larger amplitude -->
+        <div class="wave l3">
+          <svg class="wave-svg" viewBox="0 0 2880 300" preserveAspectRatio="none">
+            <path class="fill-l3" d="M0,70 Q90,34 180,70 Q270,101 360,70 Q450,38 540,70 Q630,99 720,70 Q810,36 900,70 Q990,102 1080,70 Q1170,39 1260,70 Q1350,97 1440,70 Q1530,34 1620,70 Q1710,101 1800,70 Q1890,38 1980,70 Q2070,99 2160,70 Q2250,36 2340,70 Q2430,102 2520,70 Q2610,39 2700,70 Q2790,97 2880,70 L2880,300 L0,300 Z" />
+          </svg>
+        </div>
+
+        <!-- Layer 4: largest amplitude, closest, foam along its crest -->
+        <div class="wave l4">
+          <svg class="wave-svg" viewBox="0 0 2880 300" preserveAspectRatio="none">
+            <path class="fill-l4" d="M0,70 Q90,8 180,70 Q270,123 360,70 Q450,14 540,70 Q630,120 720,70 Q810,11 900,70 Q990,126 1080,70 Q1170,17 1260,70 Q1350,117 1440,70 Q1530,8 1620,70 Q1710,123 1800,70 Q1890,14 1980,70 Q2070,120 2160,70 Q2250,11 2340,70 Q2430,126 2520,70 Q2610,17 2700,70 Q2790,117 2880,70 L2880,300 L0,300 Z" />
+            <path class="foam" d="M0,70 Q90,8 180,70 Q270,123 360,70 Q450,14 540,70 Q630,120 720,70 Q810,11 900,70 Q990,126 1080,70 Q1170,17 1260,70 Q1350,117 1440,70 Q1530,8 1620,70 Q1710,123 1800,70 Q1890,14 1980,70 Q2070,120 2160,70 Q2250,11 2340,70 Q2430,126 2520,70 Q2610,17 2700,70 Q2790,117 2880,70" />
+          </svg>
+        </div>
+      </div>
+
+      <!-- Deepest water at the very bottom edge -->
+      <div class="deep-water"></div>
+    </div>
+  </div>
+
+  <main>
+    <div class="dial">
+    <div class="picker">
+      <button id="prevBtn" class="arrow" type="button" aria-label="Shorter session">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M15 18l-6-6 6-6" />
+        </svg>
+      </button>
+
+      <div class="durations" role="group" aria-label="Session length in minutes">
+        <span id="prevNum" class="duration side" aria-hidden="true"></span>
+        <span id="curNum" class="duration center">
+          25<span class="unit">min</span>
+        </span>
+        <span id="nextNum" class="duration side" aria-hidden="true"></span>
+      </div>
+
+      <button id="nextBtn" class="arrow" type="button" aria-label="Longer session">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M9 18l6-6-6-6" />
+        </svg>
+      </button>
+    </div>
+
+    <div id="display" class="timer" role="timer" aria-live="off">25:00</div>
+    </div>
+
+    <div class="controls">
+      <button id="start" class="btn primary" type="button">Begin</button>
+      <button id="pause" class="btn" type="button">Pause</button>
+      <button id="reset" class="btn" type="button">Reset</button>
+    </div>
+
+    <div class="footer">
+      <p id="message" class="message" role="status" aria-live="polite"></p>
+      <p class="tagline">a focus timer</p>
+    </div>
+  </main>
+
+  <script>
+    // Available session lengths, in minutes.
+    const DURATIONS = [5, 15, 25, 30, 45, 60, 90];
+
+    // Elements
+    const prevBtn = document.getElementById('prevBtn');
+    const nextBtn = document.getElementById('nextBtn');
+    const prevNum = document.getElementById('prevNum');
+    const curNum = document.getElementById('curNum');
+    const nextNum = document.getElementById('nextNum');
+    const displayEl = document.getElementById('display');
+    const startBtn = document.getElementById('start');
+    const pauseBtn = document.getElementById('pause');
+    const resetBtn = document.getElementById('reset');
+    const messageEl = document.getElementById('message');
+
+    // State
+    let index = 2;               // which duration is selected (defaults to 25)
+    let remaining = getSelectedSeconds(); // seconds left on the clock
+    let intervalId = null;       // active countdown interval
+    let running = false;
+
+    function getSelectedSeconds() {
+      return DURATIONS[index] * 60;
+    }
+
+    // Format a whole number of seconds as MM:SS.
+    function formatTime(totalSeconds) {
+      const minutes = Math.floor(totalSeconds / 60);
+      const seconds = totalSeconds % 60;
+      const pad = (n) => String(n).padStart(2, '0');
+      return pad(minutes) + ':' + pad(seconds);
+    }
+
+    function render() {
+      displayEl.textContent = formatTime(remaining);
+    }
+
+    // Paint the three-number picker and the arrow availability.
+    function renderPicker() {
+      curNum.innerHTML = DURATIONS[index] + '<span class="unit">min</span>';
+
+      const hasPrev = index > 0;
+      const hasNext = index < DURATIONS.length - 1;
+
+      prevNum.textContent = hasPrev ? DURATIONS[index - 1] : '';
+      nextNum.textContent = hasNext ? DURATIONS[index + 1] : '';
+      prevNum.classList.toggle('empty', !hasPrev);
+      nextNum.classList.toggle('empty', !hasNext);
+
+      // Arrows are unavailable at the ends, and while the timer runs.
+      prevBtn.disabled = !hasPrev || running;
+      nextBtn.disabled = !hasNext || running;
+
+      // The accent moves to the action that matters now: Pause while running,
+      // Begin while idle/paused — so the highlighted button is never a no-op.
+      startBtn.classList.toggle('primary', !running);
+      pauseBtn.classList.toggle('primary', running);
+    }
+
+    function changeDuration(delta) {
+      if (running) return; // don't change session length mid-countdown
+      const next = index + delta;
+      if (next < 0 || next >= DURATIONS.length) return;
+      index = next;
+      reset();
+    }
+
+    function start() {
+      if (running || remaining <= 0) return;
+      running = true;
+      hideMessage();
+      renderPicker(); // lock the arrows
+
+      intervalId = setInterval(() => {
+        remaining -= 1;
+        render();
+
+        if (remaining <= 0) {
+          finish();
+        }
+      }, 1000);
+    }
+
+    function pause() {
+      if (!running) return;
+      clearInterval(intervalId);
+      intervalId = null;
+      running = false;
+      renderPicker(); // unlock the arrows
+    }
+
+    function reset() {
+      clearInterval(intervalId);
+      intervalId = null;
+      running = false;
+      hideMessage();
+      remaining = getSelectedSeconds();
+      render();
+      renderPicker();
+    }
+
+    function finish() {
+      clearInterval(intervalId);
+      intervalId = null;
+      running = false;
+      remaining = 0;
+      render();
+      renderPicker();
+      messageEl.textContent = "Time's up";
+      messageEl.classList.add('show');
+    }
+
+    function hideMessage() {
+      messageEl.classList.remove('show');
+    }
+
+    // Events
+    prevBtn.addEventListener('click', () => changeDuration(-1));
+    nextBtn.addEventListener('click', () => changeDuration(1));
+    startBtn.addEventListener('click', start);
+    pauseBtn.addEventListener('click', pause);
+    resetBtn.addEventListener('click', reset);
+
+    // Initial paint
+    render();
+    renderPicker();
+  </script>
+</body>
+</html>
